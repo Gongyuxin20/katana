@@ -1,5 +1,5 @@
-#ifndef KATANA_LIBGLUON_KATANA_STORAGEBACKEDARROWARRAY_H_
-#define KATANA_LIBGLUON_KATANA_STORAGEBACKEDARROWARRAY_H_
+#ifndef KATANA_LIBTSUBA_KATANA_STORAGEBACKEDARROWARRAY_H_
+#define KATANA_LIBTSUBA_KATANA_STORAGEBACKEDARROWARRAY_H_
 
 #include <list>
 #include <memory>
@@ -8,8 +8,6 @@
 #include <flatbuffers/flatbuffers.h>
 
 #include "katana/LazyArrowArray.h"
-#include "katana/ParquetReader.h"
-#include "katana/PreparedUpdate.h"
 #include "katana/Result.h"
 #include "katana/URI.h"
 
