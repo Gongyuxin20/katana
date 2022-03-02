@@ -1,0 +1,138 @@
+namespace katana.fbs;
+
+// TODO(thunt): move this to tsuba
+
+enum ArrayAction : byte {
+  Append = 0,
+  TakeAndAppend = 1,
+}
+
+enum URIType : byte {
+  Relative = 0,
+  Absolute = 1,
+}
+
+table StorageLocation {
+  location_type : URIType;
+  uri : string;
+}
+
+table LoadArrowArray {
+  length : long;
+  serialized_type : string;
+  action : ArrayAction;
+  location : StorageLocation;
+}
+
+table AppendNulls {
+  length : long;
+}
+
+union ArrowStorageOperation {
+  LoadArrowArray,
+  AppendNulls,
+}
+
+table StorageBackedArrowArray {
+  length : long;
+  serialized_type : string;
+  ops : [ArrowStorageOperation];
+}
+
+table StorageBackedArrowColumn {
+ name : string;
+ uri : StorageLocation;
+}
+
+table StorageBackedArrowTable {
+  num_rows : long;
+  columns : [StorageBackedArrowColumn];
+}
+
+table EntityTypeIDSet {
+  entity_type : uint16;
+  type_set : [uint16];
+}
+
+table EntityTypeIDName {
+  entity_type : uint16;
+  name : string;
+}
+
+table EntityTypeManager {
+  id_to_set_of_ids : [EntityTypeIDSet];
+  id_to_name : [EntityTypeIDName];
+}
+
+table EdgeArrayRange {
+  begin : uint64;
+  end : uint64;
+}
+
+table InsertNode {
+  id : uint32;
+  prop_index : uint64;
+  out_edges : [EdgeArrayRange];
+  in_edges : [EdgeArrayRange];
+}
+
+union LSPGNodeTableOp {
+  InsertNode
+}
+
+table LSPGNodeTable {
+  ops : [LSPGNodeTableOp];
+}
+
+table LogStructuredPropertyGraph {
+  node_table : LSPGNodeTable;
+  node_type_manager : EntityTypeManager;
+  edge_type_manager : EntityTypeManager;
+  in_edge_array : StorageLocation;
+  edge_source_array : StorageLocation;
+  out_edge_array : StorageLocation;
+  edge_dest_array : StorageLocation;
+  node_properties : StorageLocation;
+  node_types : StorageLocation;
+  edge_properties : StorageLocation;
+  edge_types : StorageLocation;
+}
+
+table BitsetVector {
+  data : StorageLocation;
+  num_bits : uint64;
+}
+
+table NodeLIDTranslatePair {
+  owner_lid : uint32;
+  here_lid : uint32;
+}
+
+table NodeIDBimap {
+  lid_pairs : [NodeLIDTranslatePair];
+}
+
+table LogStructuredIDTranslator {
+  num_partitions : uint16;
+  partition_id : uint16;
+  node_bimaps : [NodeIDBimap];
+  master_node_ids_end : uint32;
+  mirror_node_ids_end : uint32;
+  master_edge_ids_end : uint64;
+  mirror_edge_ids_end : uint64;
+  num_master_nodes : uint32;
+  num_mirror_nodes : uint32;
+  num_master_edges : uint64;
+  num_mirror_edges : uint64;
+  deleted_master_nodes : BitsetVector;
+  deleted_mirror_nodes : BitsetVector;
+  deleted_master_edges : BitsetVector;
+  deleted_mirror_edges : BitsetVector;
+}
+
+table DistLogStructuredPropertyGraph {
+  property_graph : StorageLocation;
+  id_translator : StorageLocation;
+  node_mirrors : [BitsetVector];
+  partition_policy : uint32;
+}

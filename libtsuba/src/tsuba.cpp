@@ -224,7 +224,7 @@ katana::CreateSrcDestFromViewsForCopy(
   std::vector<std::pair<katana::URI, katana::URI>> src_dst_files;
 
   // List out all the files in a given view
-  auto rdg_views = KATANA_CHECKED(ListViewsOfVersion(src_dir, version));
+  auto rdg_views = KATANA_CHECKED(katana::ListViewsOfVersion(src_dir, version));
   for (const auto& rdg_view : rdg_views.second) {
     auto rdg_view_uri = KATANA_CHECKED(katana::URI::Make(rdg_view.view_path));
     auto rdg_manifest_res = katana::RDGManifest::Make(rdg_view_uri);
