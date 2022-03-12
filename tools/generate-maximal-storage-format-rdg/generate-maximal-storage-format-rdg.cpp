@@ -31,7 +31,7 @@ static cll::opt<std::string> OutputFile(
     cll::Positional, cll::desc("<output rdg file>"), cll::Required);
 
 katana::PropertyGraph
-LoadGraph(const std::string& rdg_file) {
+LoadGraph(const katana::URI& rdg_file) {
   KATANA_LOG_ASSERT(!rdg_file.empty());
   katana::TxnContext txn_ctx;
   auto g_res =
@@ -60,12 +60,12 @@ StoreGraph(katana::PropertyGraph* g, std::string& output_path) {
 /// Load/store cycle the provided RDG to cleanly relocate the graph without
 /// Carrying along stale files
 katana::PropertyGraph
-CleanRelocateGraphLoad(const std::string& rdg_file) {
+CleanRelocateGraphLoad(const katana::URI& rdg_file) {
   katana::PropertyGraph g_orig = LoadGraph(rdg_file);
   auto uri_res = katana::URI::MakeRand("/tmp/propertyfilegraph");
   KATANA_LOG_ASSERT(uri_res);
-  std::string tmp_rdg_dir(uri_res.value().path());  // path() because local
-  std::string tmp_path = StoreGraph(&g_orig, tmp_rdg_dir);
+  auto tmp_rdg_dir = uri_res.value();
+  auto tmp_path = StoreGraph(&g_orig, tmp_rdg_dir);
 
   katana::PropertyGraph g = LoadGraph(tmp_path);
   return g;
@@ -73,12 +73,12 @@ CleanRelocateGraphLoad(const std::string& rdg_file) {
 
 /// Load/store cycle the provided RDG to cleanly relocate the graph without
 /// Carrying along stale files
-std::string
+katana::URI
 CleanRelocateGraphStore(katana::PropertyGraph* g, std::string& output_path) {
   auto uri_res = katana::URI::MakeRand("/tmp/propertyfilegraph");
   KATANA_LOG_ASSERT(uri_res);
-  std::string tmp_rdg_dir_2(uri_res.value().path());  // path() because local
-  std::string g_tmp_rdg_file = StoreGraph(g, tmp_rdg_dir_2);
+  auto tmp_rdg_dir_2 = uri_res.value();
+  auto g_tmp_rdg_file = StoreGraph(g, tmp_rdg_dir_2);
 
   katana::PropertyGraph g_new = LoadGraph(g_tmp_rdg_file);
   std::string g_new_rdg_file = StoreGraph(&g_new, output_path);

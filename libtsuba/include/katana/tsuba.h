@@ -56,10 +56,10 @@ OpenFlagsValid(uint32_t flags) {
 }
 
 KATANA_EXPORT katana::Result<RDGManifest> FindManifest(
-    const std::string& rdg_name);
+    const katana::URI& rdg_dir);
 
 KATANA_EXPORT katana::Result<katana::RDGManifest> FindManifest(
-    const std::string& rdg_name, katana::TxnContext* txn_ctx);
+    const katana::URI& rdg_dir, katana::TxnContext* txn_ctx);
 
 KATANA_EXPORT katana::Result<RDGHandle> Open(
     RDGManifest rdg_manifest, uint32_t flags);
@@ -87,7 +87,7 @@ KATANA_EXPORT katana::Result<void> Close(RDGHandle handle);
 
 /// Create an RDG storage location
 /// \param name is storage location prefix that will be used to store the RDG
-KATANA_EXPORT katana::Result<void> Create(const std::string& name);
+KATANA_EXPORT katana::Result<void> Create(const katana::URI& uri);
 
 /// @brief Describes properties of RDGView
 /// The RDGView will describe will identify the view-type, the arguments used to
@@ -96,7 +96,7 @@ KATANA_EXPORT katana::Result<void> Create(const std::string& name);
 struct KATANA_EXPORT RDGView {
   std::string view_type;
   std::string view_args;
-  std::string view_path;
+  katana::URI view_path;
   uint64_t num_partitions{0};
   uint32_t policy_id{0};
   bool transpose{false};

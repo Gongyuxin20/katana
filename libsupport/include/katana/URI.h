@@ -63,6 +63,9 @@ public:
 
   URI operator+(char rhs) const;
   URI operator+(const std::string& rhs) const;
+  bool operator<(URI const& o) const {
+    return path_ < o.path_ || (path_ == o.path_ && scheme_ < o.scheme_);
+  }
 
 private:
   URI(std::string scheme, std::string path);

@@ -26,9 +26,11 @@ namespace {
 
 cll::opt<std::string> input_filename(
     cll::Positional, cll::desc("<input file/directory>"), cll::Required);
+katana::URI input_uri;
 cll::opt<std::string> output_directory(
     cll::Positional, cll::desc("<local output directory/s3 directory>"),
     cll::Required);
+katana::URI output_uri;
 cll::opt<katana::SourceType> type(
     cll::desc("Input file type:"),
     cll::values(
@@ -92,7 +94,7 @@ cll::opt<bool> export_graphml(
     cll::init(false));
 
 std::unique_ptr<katana::PropertyGraph>
-ConvertKatana(const std::string& rdg_file, katana::TxnContext* txn_ctx) {
+ConvertKatana(const katana::URI& rdg_file, katana::TxnContext* txn_ctx) {
   auto result =
       katana::PropertyGraph::Make(rdg_file, txn_ctx, katana::RDGLoadOptions());
   if (!result) {
@@ -146,7 +148,7 @@ ParseWild(katana::TxnContext* txn_ctx) {
       KATANA_LOG_FATAL("Error converting graph: {}", components_result.error());
     }
     if (auto r = katana::WritePropertyGraph(
-            std::move(components_result.value()), output_directory, txn_ctx);
+            std::move(components_result.value()), output_uri, txn_ctx);
         !r) {
       KATANA_LOG_FATAL("Failed to convert property graph: {}", r.error());
     }
@@ -154,7 +156,7 @@ ParseWild(katana::TxnContext* txn_ctx) {
   }
   case katana::SourceType::kKatana:
     if (auto r = katana::WritePropertyGraph(
-            *ConvertKatana(input_filename, txn_ctx), output_directory, txn_ctx);
+            *ConvertKatana(input_uri, txn_ctx), output_uri, txn_ctx);
         !r) {
       KATANA_LOG_FATAL("Failed to convert property graph: {}", r.error());
     }
@@ -174,7 +176,7 @@ ParseNeo4j(katana::TxnContext* txn_ctx) {
       KATANA_LOG_FATAL("Error converting graph: {}", components_result.error());
     }
     if (auto r = katana::WritePropertyGraph(
-            std::move(components_result.value()), output_directory, txn_ctx);
+            std::move(components_result.value()), output_uri, txn_ctx);
         !r) {
       KATANA_LOG_FATAL("Failed to convert property graph: {}", r.error());
     }
@@ -189,11 +191,11 @@ void
 ParseMongoDB([[maybe_unused]] katana::TxnContext* txn_ctx) {
 #if defined(KATANA_MONGOC_FOUND)
   if (generate_mapping) {
-    katana::GenerateMappingMongoDB(input_filename, output_directory);
+    katana::GenerateMappingMongoDB(input_uri, output_uri);
   } else {
     if (auto r = katana::WritePropertyGraph(
-            katana::ConvertMongoDB(input_filename, mapping, chunk_size),
-            output_directory, txn_ctx);
+            katana::ConvertMongoDB(input_uri, mapping, chunk_size), output_uri,
+            txn_ctx);
         !r) {
       KATANA_LOG_FATAL("Failed to write property graph: {}", r.error());
     }
@@ -228,7 +230,16 @@ int
 main(int argc, char** argv) {
   katana::SharedMemSys sys;
   llvm::cl::ParseCommandLineOptions(argc, argv);
-
+  auto res = katana::URI::Make(input_filename);
+  if (!res) {
+    KATANA_LOG_FATAL("input file {} error: {}", input_filename, res.error());
+  }
+  input_uri = res.value();
+  res = katana::URI::Make(output_directory);
+  if (!res) {
+    KATANA_LOG_FATAL("output file {} error: {}", output_directory, res.error());
+  }
+  output_uri = res.value();
   katana::StatTimer total_timer("TimerTotal");
   total_timer.start();
   if (chunk_size <= 0) {
