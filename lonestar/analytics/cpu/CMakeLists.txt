@@ -23,3 +23,5 @@ add_subdirectory(local_clustering_coefficient)
 add_subdirectory(subgraph_extraction)
 add_subdirectory(leiden_clustering)
 add_subdirectory(matrix-completion)
+add_subdirectory(gcn)
+

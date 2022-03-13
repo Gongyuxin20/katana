@@ -10,5 +10,6 @@
 #include "katana/analytics/pagerank/pagerank.h"
 #include "katana/analytics/sssp/sssp.h"
 #include "katana/analytics/triangle_count/triangle_count.h"
+#include "katana/analytics/gcn/gcn.h"
 
 #endif

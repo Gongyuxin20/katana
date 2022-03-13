@@ -41,6 +41,7 @@ set(sources
         src/analytics/subgraph_extraction/subgraph_extraction.cpp
         src/analytics/leiden_clustering/leiden_clustering.cpp
         src/analytics/matrix_completion/matrix_completion.cpp
+        src/analytics/gcn/gcn.cpp
     )
 
 find_package(LibXml2 2.9.1 REQUIRED)
