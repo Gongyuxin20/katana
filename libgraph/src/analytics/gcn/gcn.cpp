@@ -205,19 +205,200 @@ template <typename GraphTy>
 void
 InitializeNodeState(GraphTy* graph, const std::vector<double>& layers) {
   uint layer = layers.size() -1;
-  uint sizeY = 2;
   W.resize(layer);
   dW.resize(layer);
-  // using GNode = typename GraphTy::Node;
-  // katana::do_all(
-  //     katana::iterate(*graph),
-  //     [&](const GNode& node) {
-  //       auto& node_current_degree =
-  //           graph->template GetData<GCNNodeCurrentDegree>(node);
-  //       node_current_degree.store(Degree(*graph, node));
-  //     },
-  //     katana::loopname("DegreeCounting"), 
-  //     katana::no_stats());
+  srand((unsigned)time(NULL));
+  for (uint k = 0; k < layer; k++){
+    W[k].resize(layers[k+1],std::vector<double>(layers[k],0));
+    dW[k].resize(layers[k+1],std::vector<double>(layers[k],0));
+    
+    katana::do_all(
+      katana::iterate(static_cast<size_t>(0), W[k].size()),
+      [&](size_t i) {
+        for (uint j =0; j < W[k][0].size(); j++) {
+          W[k][i][j] = rand() / double(RAND_MAX);
+        }
+      },
+      katana::loopname("RandomInitVector"), katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  }
+  uint layer_plus = layers.size();
+
+  using GNode = typename GraphTy::Node;
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        w0agg[src].resize(layers[1], std::vector<double>(layers[0],0));
+        feature[src].resize(layer_plus, std::vector<double>(layers[0],0));
+        
+        agg_weight[src].resize(layer_plus);
+        agg[src].resize(layer_plus);
+        pred_y[src].resize(layers[2]);
+        y[src].resize(layers[2]);
+        dH1[src].resize(layers[1]);
+        dH2[src].resize(layers[2]);
+
+        feature[src][0][0] = src*0.01;
+        feature[src][0][1] = 1-src*0.01;
+
+        uint y1 = 1;
+        y[src][0] = y1;
+        y[src][1] = 1-y1;
+
+      },
+      katana::loopname("init_node_state"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  y[0][0] = 0;
+  y[0][1] = 1;
+  y[3][0] = 0;
+  y[3][1] = 1;
+  feature[0][0][0]=1;
+  feature[0][0][1]=0;
+  feature[3][0][0]=0.97;
+  feature[3][0][1]=0.03;
+  std::cout<<"y"<<std::endl;
+  for (GNode src=0; src< graph->NumNodes(); src++){
+    std::cout<<src<<":::"<<y[src][0]<<" "<<y[src][1]<<std::endl;
+  }
+
+}
+
+/**
+ * Activation Relu Function
+ *
+ * @param graph Graph to use
+ */
+template <typename GraphTy>
+void
+ActivationRelu(GraphTy* graph, const uint32_t& layerI) {
+  // relu 激活
+  using GNode = typename GraphTy::Node;
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        auto& srcAGG = agg_weight[src][layerI];
+        feature[src][layerI] = ReLU(srcAGG); // relu(agg * W)
+
+      },
+      katana::loopname("node_relu"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+
+}
+
+/**
+ * Activation Softmax Function
+ *
+ * @param graph Graph to use
+ */
+template <typename GraphTy>
+void
+ActivationSoftmax(GraphTy* graph, const uint32_t& layerI) {
+  // softmax 激活
+  using GNode = typename GraphTy::Node;
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        auto& srcAGG = agg_weight[src][layerI];
+        feature[src][layerI] = softmax(srcAGG); // softmax(agg * W)
+        pred_y[src] = feature[src][layerI]; // 最后一层目标函数
+
+      },
+      katana::loopname("node_softmax"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+
+}
+
+/**
+ * GCN Forward Function
+ *
+ * @param graph Graph to use
+ */
+template <typename GraphTy>
+void
+Forward(GraphTy* graph, const uint32_t& layerI) {
+  // softmax 激活
+  using GNode = typename GraphTy::Node;
+  // AGG
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        double srcDegree = graph->template GetData<GCNNodeCurrentDegree>(src);
+        auto& srcAGG = feature[src][layerI];
+        auto& dstAGG = agg[src][layerI];
+        dstAGG = srcAGG;
+        for (auto e : Edges(*graph, src)) {
+            auto dst = EdgeDst(*graph, e);
+            auto& dstFeature = feature[dst][layerI];
+            auto& dstDegree = 
+                graph->template GetData<GCNNodeCurrentDegree>(dst);
+            for (uint i = 0; i < srcAGG.size(); i++){
+              dstAGG[i] = dstAGG[i] + (1/(sqrt(srcDegree * dstDegree))) * dstFeature[i];
+            }
+        }
+
+      },
+      katana::loopname("node_agg"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  // std::cout<<"AGG"<<layerI<<std::endl;
+  // for (GNode src = 0; src < graph->NumNodes(); src++){
+  //   std::cout<<src<<":::"<<feature[src][layerI][0]<<" "<<feature[src][layerI][1]<<std::endl;
+  // }
+  // dot
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        auto& srcAGG = agg[src][layerI];
+        agg_weight[src][layerI+1] = dot (W[layerI], srcAGG); // W * agg     
+
+      },
+      katana::loopname("node_dot_w"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  
+}
+
+/**
+ * Calculate Loss Function
+ *
+ * @param graph Graph to use
+ */
+template <typename GraphTy>
+void
+ComputeLoss(GraphTy* graph, std::vector<double>& LOSS, const uint32_t& curRound) {
+  // loss 计算
+  katana::GAccumulator<double> GAccumulator_sum;
+  using GNode = typename GraphTy::Node;
+  katana::do_all(
+      katana::iterate(*graph),
+      [&](const GNode& src) {
+        for (uint i = 0; i < pred_y[src].size(); i++){
+          GAccumulator_sum += -(y[src][i] * log(pred_y[src][i]));
+        }
+
+      },
+      katana::loopname("node_loss"),katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  double loss = GAccumulator_sum.reduce();
+  LOSS[curRound] = loss;
+}
+
+/**
+ * Update Weight Function
+ *
+ */
+void
+UpdateWeight(const double& lr, const uint32_t& layerI) {
+  // update weight
+  
+  katana::do_all(
+      katana::iterate(static_cast<size_t>(0), W[layerI].size()),
+      [&](size_t i) {
+        for (uint j =0; j < W[layerI][0].size(); j++) {
+          W[layerI][i][j] = W[layerI][i][j] - lr * dW[layerI][i][j];
+        }
+      },
+      katana::loopname("UpdateVector"), katana::steal(), 
+      katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+  
 }
 
 /**
@@ -249,48 +430,135 @@ SetupInitialWorklist(
 
 
 /**
- * Starting with initial dead nodes as current worklist; decrement degree;
- * add to next worklist; switch next with current and repeat until worklist
- * is empty (i.e. no more dead nodes).
+ * Compute GCN Algorithm
  *
  * @param graph Graph to operate on
- * @param k_core_number Each node in the core is expected to have degree <= k_core_number
  */
 template <typename GraphTy>
 void
-SyncCascadeGCN(GraphTy* graph, uint32_t k_core_number) {
+ComputeGCN(GraphTy* graph) {
   using GNode = typename GraphTy::Node;
-  auto current = std::make_unique<katana::InsertBag<GNode>>();
-  auto next = std::make_unique<katana::InsertBag<GNode>>();
+  std::vector<double> layers;
+  layers.resize(3,0);
+  layers[0]=2;
+  layers[1]=3;
+  layers[2]=2;
+  InitializeNodeState(graph, layers);
+  uint k = 100;
+  int curRound = 0;
+  std::vector<double> LOSS;
+  std::vector<double> ACCURACY;
+  LOSS.resize(k,0);
+  ACCURACY.resize(k,0);
+  double lr = 0.02;
+  katana::StatTimer convergeTimer("converge_time-GCN");
+  convergeTimer.start();
+  
+  while ( k-- ){
+    Forward(graph, 0);
+    ActivationRelu(graph, 1);
+    Forward(graph, 1);
+    ActivationSoftmax(graph, 2);
+    ComputeLoss(graph, LOSS, curRound);
+    double acc = accuracy(pred_y, y);
+    ACCURACY[curRound] = acc;
+    // std::cout<<"accuracy"<<":::"<<acc<<std::endl;
 
-  //! Setup worklist.
-  SetupInitialWorklist(*graph, *next, k_core_number);
+    // 获取dW[1]
+    katana::GAccumulator<double> GAccumulator_w1;
+    for (uint i = 0; i < dW[1].size(); i++){
+      for(uint j = 0; j < dW[1][0].size(); j++){
+        GAccumulator_w1.reset();
+        katana::do_all(
+            katana::iterate(*graph),
+            [&](const GNode& src) {
+              dH2[src][i] = pred_y[src][i]-y[src][i];
+              GAccumulator_w1 += dH2[src][i] * agg[src][i][j];
+            },
+            katana::loopname("node_dw1"),katana::steal(), 
+            katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+        dW[1][i][j] = GAccumulator_w1.reduce();
+      }
+    }
 
-  while (!next->empty()) {
-    //! Make "next" into current.
-    std::swap(current, next);
-    next->clear();
-
+    // 两次汇聚第0层结果
+    // AGG_AGG
     katana::do_all(
-        katana::iterate(*current),
-        [&](const GNode& dead_node) {
-          //! Decrement degree of all neighbors.
-          for (auto e : Edges(*graph, dead_node)) {
-            auto dest = EdgeDst(*graph, e);
-            auto& dest_current_degree =
-                graph->template GetData<GCNNodeCurrentDegree>(dest);
-            uint32_t old_degree = katana::atomicSub(dest_current_degree, 1u);
-
-            if (old_degree == k_core_number) {
-              //! This thread was responsible for putting degree of destination
-              //! below threshold; add to worklist.
-              next->emplace(dest);
+        katana::iterate(*graph),
+        [&](const GNode& src) {
+          for (uint i = 0; i < w0agg[src].size(); i++){
+            for (uint j = 0; j < w0agg[src][0].size(); j++){
+              if (agg_weight[src][1][i] >= 0){
+                w0agg[src][i][j] = agg[src][0][j];
+              }
             }
           }
         },
-        katana::steal(), katana::chunk_size<GCNPlan::kChunkSize>(),
-        katana::loopname("GCN Synchronous"));
+        katana::loopname("node_agg_agg0"),katana::steal(), 
+        katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+
+    katana::do_all(
+        katana::iterate(*graph),
+        [&](const GNode& src) {
+          auto& srcAGG = w0agg[src];
+          double srcDegree = 
+                graph->template GetData<GCNNodeCurrentDegree>(src);
+          auto& dstAGG = w0agg_agg[src]; // agg_agg
+          dstAGG = srcAGG;
+          for (auto e : Edges(*graph, src)) {
+            auto dst = EdgeDst(*graph, e);
+            auto& dstFeature = w0agg[dst];
+            auto& dstDegree = 
+                graph->template GetData<GCNNodeCurrentDegree>(dst);
+            for (uint i = 0; i < srcAGG.size(); i++){
+              for (uint j = 0; j < srcAGG[0].size(); j++){
+                dstAGG[i][j] = dstAGG[i][j] + (1/(sqrt(srcDegree * dstDegree))) * dstFeature[i][j];
+                
+              }
+            }
+        }
+        // loss 在层中传递
+        dH1[src] = dot( dH2[src], W[1]);
+        },
+        katana::loopname("node_agg_agg0"),katana::steal(), 
+        katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+    
+    // 获取dW[0]
+    katana::GAccumulator<double> GAccumulator_w0;
+    for (uint i = 0; i < dW[0].size(); i++){
+      for (uint j = 0; j < dW[0][0].size(); j++){
+        GAccumulator_w0.reset();
+        katana::do_all(
+          katana::iterate(*graph),
+          [&](const GNode& src) {
+            GAccumulator_w0 += dH1[src][i] * w0agg_agg[src][i][j];
+          },
+          katana::loopname("node_dw0"),katana::steal(), 
+          katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+        dW[0][i][j] = GAccumulator_w0.reduce();
+
+      }
+    }
+    // 更新W
+    UpdateWeight(lr, 1);
+    UpdateWeight(lr, 0);
+    curRound++;
+    
   }
+
+  convergeTimer.stop();
+  double total_time = double(convergeTimer.get_usec())/1000000.0;
+  
+  for (uint i = 0; i < LOSS.size(); i++){
+    std::cout<<"loss "<<i<<":::"<< LOSS[i]<<" "<<"accuracy"<<":::"<<ACCURACY[i]<<std::endl;
+    
+  }
+  std::cout<<"softmax"<<std::endl;
+  for (GNode src = 0; src < graph->NumNodes(); src++){
+    std::cout<<src<<":::"<<pred_y[src][0]<<" "<<pred_y[src][1]<<std::endl;
+  }
+  std::cout<<"total convergeTimer :: "<<total_time<<"s"<<std::endl;
+  FreeMemory();
 }
 
 /**
@@ -363,7 +631,8 @@ GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
   size_t approxNodeData = 4 * (graph->NumNodes() + graph->NumEdges());
   katana::EnsurePreallocated(8, approxNodeData);
   katana::ReportPageAllocGuard page_alloc;
-
+  
+  AllocateMemory(graph->NumNodes());
   //! Intialization of degrees.
   DegreeCounting(graph);
 
@@ -374,7 +643,7 @@ GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
 
   switch (algo.algorithm()) {
   case GCNPlan::kSynchronous:
-    SyncCascadeGCN(graph, k_core_number);
+    ComputeGCN(graph);
     break;
   case GCNPlan::kAsynchronous:
     AsyncCascadeGCN(graph, k_core_number);
@@ -383,6 +652,7 @@ GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
     return katana::ErrorCode::AssertionFailed;
   }
   exec_time.stop();
+
 
   return katana::ResultSuccess();
 }
