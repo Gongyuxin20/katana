@@ -27,6 +27,17 @@
 #include "math.h"
 #include "stdlib.h"
 
+#include <iostream>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <cassert>
+#include <map>
+#include <set>
+#include <string>
+
+
 using namespace katana::analytics;
 
 const int GCNPlan::kChunkSize = 64;
@@ -37,6 +48,8 @@ const int GCNPlan::kChunkSize = 64;
 //! Node deadness can be derived from current degree and k value, so no field
 //! necessary.
 struct GCNNodeCurrentDegree : public katana::AtomicPODProperty<uint32_t> {};
+struct GCNNodeLabel : public katana::AtomicPODProperty<uint8_t> {};
+struct GCNNodeFeature : public katana::AtomicPODProperty<double> {};
 
 struct GCNNodeAlive : public katana::PODProperty<uint32_t> {};
 
@@ -47,7 +60,9 @@ std::vector <std::vector < std::vector <double>>> W; // 权重矩阵
 std::vector <std::vector < std::vector <double>>> dW; // W对应需要更新的梯度
 
 std::vector <std::vector <double>> y; // label p维
+std::vector <std::string> labels; // labels string类型
 std::vector <std::vector <double>> pred_y; // pred_result p维
+std::vector <double> pred_labels; // labels string类型
 std::vector <std::vector <double>> dH1; // H1 处loss m维
 std::vector <std::vector <double>> dH2; // H2 处loss p维
 
@@ -56,6 +71,103 @@ std::vector <std::vector < std::vector <double>>> agg_weight; // Zi
 std::vector <std::vector < std::vector <double>>> agg; // agg
 std::vector <std::vector < std::vector <double>>> w0agg; // g'/W0 after agg
 std::vector <std::vector < std::vector <double>>> w0agg_agg; // g'/W0 after agg_agg
+
+void ReadContentFile(   std::string& content_file, 
+                        std::vector <std::vector < std::vector <double>>>& feature, 
+                        std::vector <std::string>& labels, const uint layers_plus )
+{
+  // 读取文件
+  std::vector <std::vector <std::string>> info;
+  std::ifstream infile;
+	infile.open(content_file.data());   //将文件流对象与文件连接起来 
+	assert(infile.is_open());   //若失败,则输出错误消息,并终止程序运行 
+	std::vector<std::string> data;
+	std::string s;
+	while (std::getline(infile, s)) {
+		std::istringstream is(s); //将读出的一行转成数据流进行操作
+		std::string d;
+		while (!is.eof()) {
+			is >> d;
+			data.push_back(d);
+		}
+		info.push_back(data);
+		data.clear();
+		s.clear();
+	}
+	infile.close();             //关闭文件输入流 
+
+  // 提取元素
+  for (uint i = 0; i < info.size(); i++ ){
+      labels[i] = info[i][info[0].size()-1];
+      feature[i].resize(layers_plus);
+      feature[i][0].resize(info[0].size()-2);
+      for(uint j = 1; j < info[0].size()-1; j++ ){
+          std::istringstream iss(info[i][j]);  
+          double num;  
+          iss >> num;  
+          feature[i][0][j-1]= num;
+          
+      }
+      
+  }
+  
+  // for (uint i = 0; i < feature.size(); i++ ){
+  //     for(uint j = 0; j < feature[0][0].size(); j++ ){
+  //         std::cout << feature[i][0][j] << " ";
+  //     }
+  //     std::cout << std::endl;
+  // }
+  std::cout <<"Reading Content Files is Sccuess"<< std::endl;
+
+
+}
+void OneHot( std::vector <std::string>& labels, std::vector <std::vector <double>>& y)
+{
+    //one_hot 编码
+    std::map <std::string,uint> mp;
+    std::set <std::string> classes; // classes string类型 看有多少类
+    for (auto label : labels){
+        classes.insert(label);
+    }
+    uint num = 0;
+    for(std::set<std::string>::iterator it=classes.begin() ;it!=classes.end();it++)
+    {
+        mp.insert(std::make_pair(*it,num++));
+    }
+    std::map <std::string,uint>::iterator iter;
+    iter = mp.begin();
+    while(iter != mp.end()) {
+        std::cout << iter->first << " : " << iter->second << std::endl;
+        iter++;
+    }
+
+    for( uint src = 0; src < labels.size(); src++) {
+       y[src].resize(mp.size(),0);
+       std::string y_true = labels[src];
+       y[src][mp[y_true]] = 1;
+    }
+
+    // for (auto a : y) {
+	// 	for (auto  yy: a) {
+	// 	std::cout << yy << " ";
+    //     }
+		
+	// 	std::cout << std::endl;
+	// }
+}
+
+void Normalize( std::vector <double>& v)
+{
+    //归一化
+    double sum = 0.0000;
+    for (uint i = 0; i < v.size(); i++) {
+    sum += v[i];
+    }
+    for (uint i = 0; i < v.size(); i++) {
+    v[i] = v[i]/sum;
+    }
+
+}
 
 void AllocateMemory( uint64_t numNodes)
 {
@@ -68,6 +180,8 @@ void AllocateMemory( uint64_t numNodes)
   agg.resize(numNodes);
   w0agg.resize(numNodes);
   w0agg_agg.resize(numNodes);
+  labels.resize(numNodes);
+  pred_labels.resize(numNodes);
     
 }
 
@@ -82,6 +196,8 @@ void FreeMemory()
   agg.resize(0);
   w0agg.resize(0);
   w0agg_agg.resize(0);
+  labels.resize(0);
+  pred_labels.resize(0);
     
 }
 
@@ -163,6 +279,7 @@ double accuracy(std::vector<std::vector<double> > y_pred, std::vector<std::vecto
             max_idy = j;
           }
         }
+        pred_labels[i]= max_idx;
         if (max_idx == max_idy){
           GAccumulator_result += 1.0;
         }
@@ -216,7 +333,8 @@ InitializeNodeState(GraphTy* graph, const std::vector<double>& layers) {
       katana::iterate(static_cast<size_t>(0), W[k].size()),
       [&](size_t i) {
         for (uint j =0; j < W[k][0].size(); j++) {
-          W[k][i][j] = rand() / double(RAND_MAX);
+          W[k][i][j] = 2.0 * rand() / double(RAND_MAX) - 1.0;
+          
         }
       },
       katana::loopname("RandomInitVector"), katana::steal(), 
@@ -229,37 +347,45 @@ InitializeNodeState(GraphTy* graph, const std::vector<double>& layers) {
       katana::iterate(*graph),
       [&](const GNode& src) {
         w0agg[src].resize(layers[1], std::vector<double>(layers[0],0));
-        feature[src].resize(layer_plus, std::vector<double>(layers[0],0));
+        // feature[src].resize(layer_plus, std::vector<double>(layers[0],0));
         
         agg_weight[src].resize(layer_plus);
         agg[src].resize(layer_plus);
         pred_y[src].resize(layers[2]);
-        y[src].resize(layers[2]);
+        // y[src].resize(layers[2]);
         dH1[src].resize(layers[1]);
         dH2[src].resize(layers[2]);
 
-        feature[src][0][0] = src*0.01;
-        feature[src][0][1] = 1-src*0.01;
+        // feature[src][0][0] = src*0.01;
+        // feature[src][0][1] = 1-src*0.01;
 
-        uint y1 = 1;
-        y[src][0] = y1;
-        y[src][1] = 1-y1;
+        // uint y1 = 1;
+        // y[src][0] = y1;
+        // y[src][1] = 1-y1;
 
       },
       katana::loopname("init_node_state"),katana::steal(), 
       katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
-  y[0][0] = 0;
-  y[0][1] = 1;
-  y[3][0] = 0;
-  y[3][1] = 1;
-  feature[0][0][0]=1;
-  feature[0][0][1]=0;
-  feature[3][0][0]=0.97;
-  feature[3][0][1]=0.03;
-  std::cout<<"y"<<std::endl;
-  for (GNode src=0; src< graph->NumNodes(); src++){
-    std::cout<<src<<":::"<<y[src][0]<<" "<<y[src][1]<<std::endl;
-  }
+  // y[0][0] = 0;
+  // y[0][1] = 1;
+  // y[4][0] = 0;
+  // y[4][1] = 1;
+  // y[5][0] = 0;
+  // y[5][1] = 1;
+  // y[8][0] = 0;
+  // y[8][1] = 1;
+  // feature[0][0][0]=1;
+  // feature[0][0][1]=0;
+  // feature[4][0][0]=0.96;
+  // feature[4][0][1]=0.04;
+  // feature[5][0][0]=0.95;
+  // feature[5][0][1]=0.05;
+  // feature[8][0][0]=0.92;
+  // feature[8][0][1]=0.08;
+  // std::cout<<"y"<<std::endl;
+  // for (GNode src=0; src< graph->NumNodes(); src++){
+  //   std::cout<<src<<":::"<<y[src][0]<<" "<<y[src][1]<<std::endl;
+  // }
 
 }
 
@@ -378,7 +504,8 @@ ComputeLoss(GraphTy* graph, std::vector<double>& LOSS, const uint32_t& curRound)
       katana::loopname("node_loss"),katana::steal(), 
       katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
   double loss = GAccumulator_sum.reduce();
-  LOSS[curRound] = loss;
+  std::cout<<"loss"<<":::"<<loss / graph->NumNodes()<<std::endl;
+  LOSS[curRound] = loss / graph->NumNodes();
 }
 
 /**
@@ -436,25 +563,53 @@ SetupInitialWorklist(
  */
 template <typename GraphTy>
 void
-ComputeGCN(GraphTy* graph) {
-  using GNode = typename GraphTy::Node;
+ComputeGCN(GraphTy* graph, std::string& content_file) {
+  
   std::vector<double> layers;
   layers.resize(3,0);
-  layers[0]=2;
-  layers[1]=3;
-  layers[2]=2;
+  
+  ReadContentFile(content_file, feature, labels, layers.size());
+  
+  OneHot(labels, y);
+  for (uint src =0 ; src < graph->NumNodes(); src++){
+    Normalize(feature[src][0]);
+  }
+  // 记得改
+  layers[0]=feature[0][0].size();
+  layers[1]=16;
+  layers[2]=y[0].size();
+  std::cout << layers[0]<<std::endl;
+  std::cout << layers[1]<<std::endl;
+  std::cout << layers[2]<<std::endl;
   InitializeNodeState(graph, layers);
-  uint k = 100;
+  // for (uint i = 0; i < feature.size(); i++ ){
+  //       for(uint j = 0; j < feature[0][0].size(); j++ ){
+  //           std::cout << feature[i][0][j] << " ";
+  //       }
+  //       std::cout << std::endl;
+  //   }
+  
+  
+  
   int curRound = 0;
+  // double lr = 0.01/graph->NumNodes();
+  
+  // double lr = 0.000005;
+  double lr = 0.01;
+  uint k = 100;
   std::vector<double> LOSS;
   std::vector<double> ACCURACY;
   LOSS.resize(k,0);
   ACCURACY.resize(k,0);
-  double lr = 0.02;
   katana::StatTimer convergeTimer("converge_time-GCN");
   convergeTimer.start();
   
+  using GNode = typename GraphTy::Node;
   while ( k-- ){
+    // if (curRound % 50 == 0){
+    //   lr =lr -0.000;
+    // }
+    std::cout<<"this is "<<curRound<<std::endl;
     Forward(graph, 0);
     ActivationRelu(graph, 1);
     Forward(graph, 1);
@@ -462,9 +617,21 @@ ComputeGCN(GraphTy* graph) {
     ComputeLoss(graph, LOSS, curRound);
     double acc = accuracy(pred_y, y);
     ACCURACY[curRound] = acc;
-    // std::cout<<"accuracy"<<":::"<<acc<<std::endl;
+    std::cout<<"accuracy"<<":::"<<acc<<std::endl;
 
     // 获取dW[1]
+    // std::cout<<"size0 dh2 "<<dH2.size()<<std::endl;
+    // std::cout<<"size1 dh2 "<<dH2[0].size()<<std::endl;
+    // std::cout<<"size0 dw1 "<<dW[1].size()<<std::endl;
+    // std::cout<<"size1 dw1 "<<dW[1][0].size()<<std::endl;
+    // std::cout<<"size0 pred_y "<<pred_y.size()<<std::endl;
+    // std::cout<<"size1 pred_y "<<pred_y[0].size()<<std::endl;
+    // std::cout<<"size0 y "<<y.size()<<std::endl;
+    // std::cout<<"size1 y "<<y[0].size()<<std::endl;
+    // std::cout<<"size0 agg "<<agg.size()<<std::endl;
+    // std::cout<<"size1 agg "<<agg[0].size()<<std::endl;
+    // std::cout<<"size2 agg "<<agg[0][0].size()<<std::endl;
+   
     katana::GAccumulator<double> GAccumulator_w1;
     for (uint i = 0; i < dW[1].size(); i++){
       for(uint j = 0; j < dW[1][0].size(); j++){
@@ -473,13 +640,19 @@ ComputeGCN(GraphTy* graph) {
             katana::iterate(*graph),
             [&](const GNode& src) {
               dH2[src][i] = pred_y[src][i]-y[src][i];
-              GAccumulator_w1 += dH2[src][i] * agg[src][i][j];
+              
+              GAccumulator_w1 += dH2[src][i] * agg[src][1][j];
             },
             katana::loopname("node_dw1"),katana::steal(), 
             katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+        // dW[1][i][j] = GAccumulator_w1.reduce() / graph -> NumNodes();
         dW[1][i][j] = GAccumulator_w1.reduce();
+        // std::cout<<i<<"::"<<j<<"dw1:::"<<GAccumulator_w1.reduce()<<" ";
+        // std::cout<<i<<"::"<<j<<"dH2:::"<<GAccumulator_w1.reduce()<<":::"<<std::endl;
       }
+      // std::cout<<std::endl;
     }
+    
 
     // 两次汇聚第0层结果
     // AGG_AGG
@@ -497,6 +670,7 @@ ComputeGCN(GraphTy* graph) {
         katana::loopname("node_agg_agg0"),katana::steal(), 
         katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
 
+    
     katana::do_all(
         katana::iterate(*graph),
         [&](const GNode& src) {
@@ -523,6 +697,7 @@ ComputeGCN(GraphTy* graph) {
         katana::loopname("node_agg_agg0"),katana::steal(), 
         katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
     
+    
     // 获取dW[0]
     katana::GAccumulator<double> GAccumulator_w0;
     for (uint i = 0; i < dW[0].size(); i++){
@@ -535,6 +710,7 @@ ComputeGCN(GraphTy* graph) {
           },
           katana::loopname("node_dw0"),katana::steal(), 
           katana::chunk_size<GCNPlan::kChunkSize>(), katana::no_stats());
+        // dW[0][i][j] = GAccumulator_w0.reduce()/ graph -> NumNodes();
         dW[0][i][j] = GAccumulator_w0.reduce();
 
       }
@@ -553,10 +729,12 @@ ComputeGCN(GraphTy* graph) {
     std::cout<<"loss "<<i<<":::"<< LOSS[i]<<" "<<"accuracy"<<":::"<<ACCURACY[i]<<std::endl;
     
   }
-  std::cout<<"softmax"<<std::endl;
-  for (GNode src = 0; src < graph->NumNodes(); src++){
-    std::cout<<src<<":::"<<pred_y[src][0]<<" "<<pred_y[src][1]<<std::endl;
-  }
+  // std::cout<<"pred_labels"<<std::endl;
+  // for (GNode src = 0; src < graph->NumNodes(); src++){
+  //   std::cout<<src<<":::";
+  //   std::cout<<pred_labels[src]<<" ";
+  // }
+  std::cout<<std::endl;
   std::cout<<"total convergeTimer :: "<<total_time<<"s"<<std::endl;
   FreeMemory();
 }
@@ -627,7 +805,7 @@ GCNMarkAliveNodes(GraphTy* graph, uint32_t k_core_number) {
 
 template <typename GraphTy>
 static katana::Result<void>
-GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
+GCNImpl(GraphTy* graph, std::string& content_file, GCNPlan algo, uint32_t k_core_number) {
   size_t approxNodeData = 4 * (graph->NumNodes() + graph->NumEdges());
   katana::EnsurePreallocated(8, approxNodeData);
   katana::ReportPageAllocGuard page_alloc;
@@ -643,7 +821,7 @@ GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
 
   switch (algo.algorithm()) {
   case GCNPlan::kSynchronous:
-    ComputeGCN(graph);
+    ComputeGCN(graph, content_file);
     break;
   case GCNPlan::kAsynchronous:
     AsyncCascadeGCN(graph, k_core_number);
@@ -659,7 +837,7 @@ GCNImpl(GraphTy* graph, GCNPlan algo, uint32_t k_core_number) {
 
 katana::Result<void>
 katana::analytics::GCN(
-    katana::PropertyGraph* pg, uint32_t k_core_number,
+    katana::PropertyGraph* pg, std::string& content_file, uint32_t k_core_number,
     const std::string& output_property_name, katana::TxnContext* txn_ctx,
     const bool& is_symmetric, GCNPlan plan) {
   katana::analytics::TemporaryPropertyGuard temporary_property{
@@ -675,7 +853,7 @@ katana::analytics::GCN(
     Graph graph =
         KATANA_CHECKED(Graph::Make(pg, {temporary_property.name()}, {}));
 
-    KATANA_CHECKED(GCNImpl(&graph, plan, k_core_number));
+    KATANA_CHECKED(GCNImpl(&graph, content_file, plan, k_core_number));
   } else {
     using Graph = katana::TypedPropertyGraphView<
         katana::PropertyGraphViews::Undirected, NodeData, EdgeData>;
@@ -683,7 +861,7 @@ katana::analytics::GCN(
     Graph graph =
         KATANA_CHECKED(Graph::Make(pg, {temporary_property.name()}, {}));
 
-    KATANA_CHECKED(GCNImpl(&graph, plan, k_core_number));
+    KATANA_CHECKED(GCNImpl(&graph, content_file, plan, k_core_number));
   }
   // Post processing. Mark alive nodes.
   KATANA_CHECKED(pg->ConstructNodeProperties<std::tuple<GCNNodeAlive>>(

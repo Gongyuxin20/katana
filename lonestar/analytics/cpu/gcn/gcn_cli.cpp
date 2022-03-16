@@ -37,6 +37,9 @@ namespace cll = llvm::cl;
 static cll::opt<std::string> inputFile(
     cll::Positional, cll::desc("<input file>"), cll::Required);
 
+static cll::opt<std::string> contentFile(
+    cll::Positional, cll::desc("<content file>"), cll::Required);
+
 //! Choose algorithm: worklist vs. sync.
 static cll::opt<GCNPlan::Algorithm> algo(
     "algo", cll::desc("Choose an algorithm (default value SyncTile):"),
@@ -113,7 +116,7 @@ main(int argc, char** argv) {
 
   katana::TxnContext txn_ctx;
   if (auto r = GCN(
-          pg_projected_view.get(), kCoreNumber, "node-in-core", &txn_ctx,
+          pg_projected_view.get(), contentFile, kCoreNumber, "node-in-core", &txn_ctx,
           symmetricGraph, plan);
       !r) {
     KATANA_LOG_FATAL("Failed to compute k-core: {}", r.error());

@@ -48,9 +48,10 @@ public:
 /// The property named output_property_name is created by this function and may
 /// not exist before the call.
 KATANA_EXPORT Result<void> GCN(
-    PropertyGraph* pg, uint32_t k_core_number,
+    PropertyGraph* pg, std::string& content_file, uint32_t k_core_number,
     const std::string& output_property_name, katana::TxnContext* txn_ctx,
     const bool& is_symmetric = false, GCNPlan plan = GCNPlan());
+
 
 KATANA_EXPORT Result<void> GCNAssertValid(
     PropertyGraph* pg, uint32_t k_core_number,

@@ -1,0 +1,1 @@
+{"lineage":{"command_line":"./tools/graph-convert/graph-convert --gr2kg /root/project/github/katana/inputs/demo_edge /root/project/github/katana/inputs/demo"},"magic":1263682631,"num_hosts":1,"policy_id":0,"previous_version":0,"transpose":false,"version":1}
